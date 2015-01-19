@@ -82,7 +82,8 @@ class MotionPlanningDisplay : public PlanningSceneDisplay
 {
   Q_OBJECT
 
-  public:
+    void showLinkCollisions();
+public:
 
   MotionPlanningDisplay();
 
@@ -206,6 +207,8 @@ protected:
   void executeMainLoopJobs();
   void clearTrajectoryTrail();
   void publishInteractiveMarkers(bool pose_update);
+  void publishCollisionMarkers(visualization_msgs::MarkerArray& markers);
+
 
   void recomputeQueryStartStateMetrics();
   void recomputeQueryGoalStateMetrics();
@@ -250,6 +253,10 @@ protected:
   std::vector<rviz::Robot*> trajectory_trail_;
   ros::Subscriber planning_group_sub_;
   ros::Subscriber trajectory_topic_sub_;
+
+  ros::Publisher collision_marker_array_publisher_;
+  visualization_msgs::MarkerArray collision_markers_;
+
   ros::NodeHandle private_handle_, node_handle_;
   bool animating_path_;
   int current_state_;

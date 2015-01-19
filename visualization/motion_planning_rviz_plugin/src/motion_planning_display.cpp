@@ -40,7 +40,7 @@
 #include <rviz/visualization_manager.h>
 #include <rviz/robot/robot.h>
 #include <rviz/robot/robot_link.h>
-
+#include <moveit/collision_detection/collision_tools.h>
 #include <rviz/properties/property.h>
 #include <rviz/properties/string_property.h>
 #include <rviz/properties/bool_property.h>
@@ -220,6 +220,8 @@ MotionPlanningDisplay::MotionPlanningDisplay() :
   background_process_.setJobUpdateEvent(boost::bind(&MotionPlanningDisplay::backgroundJobUpdate, this, _1, _2));
 
   connect(this, SIGNAL(timeToShowNewTrail()), this, SLOT(changedShowTrail()));
+
+  collision_marker_array_publisher_ = node_handle_.advertise<visualization_msgs::MarkerArray>("goal_collision_marker_array",100);
 }
 
 // ******************************************************************************************
@@ -771,6 +773,7 @@ void MotionPlanningDisplay::addStatusText(const std::string &text)
 {
   if (frame_)
     frame_->ui_->status_text->append(QString::fromStdString(text));
+    ROS_ERROR_STREAM(text);
 }
 
 void MotionPlanningDisplay::addStatusText(const std::vector<std::string> &text)
@@ -829,6 +832,42 @@ void MotionPlanningDisplay::drawQueryGoalState()
 
       // update link colors
       std::vector<std::string> collision_links;
+      collision_detection::CollisionRequest req;
+      collision_detection::CollisionResult res;
+      req.contacts = true;
+      req.max_contacts = 100;
+      req.max_contacts_per_pair = 10;
+      req.verbose = true;
+      req.group_name = getCurrentPlanningGroup();
+      getPlanningSceneRO()->checkCollisionUnpadded(req, res, *state);
+      if(res.collision)
+      {
+        if(res.contact_count > 0)
+        {
+          std_msgs::ColorRGBA color;
+                 color.r = 1.0;
+                 color.g = 0.0;
+                 color.b = 1.0;
+                 color.a = 0.5;
+                 visualization_msgs::MarkerArray markers;
+                 collision_detection::getCollisionMarkersFromContacts(markers,
+                                                                      "/root",
+                                                                      res.contacts,
+                                                                      color,
+                                                                      ros::Duration(), // remain until deleted
+                                                                      0.01);           // radius
+         publishCollisionMarkers(markers);
+
+        }
+      }
+      else
+      {
+          ROS_INFO("Not colliding");
+
+               // delete the old collision point markers
+               visualization_msgs::MarkerArray empty_marker_array;
+               publishCollisionMarkers(empty_marker_array);
+      }
       getPlanningSceneRO()->getCollidingLinks(collision_links, *state);
       status_links_goal_.clear();
       for (std::size_t i = 0 ; i < collision_links.size() ; ++i)
@@ -837,6 +876,7 @@ void MotionPlanningDisplay::drawQueryGoalState()
       {
         collision_detection::CollisionResult::ContactMap pairs;
         getPlanningSceneRO()->getCollidingPairs(pairs, *state);
+
         setStatusTextColor(query_goal_color_property_->getColor());
         addStatusText("Goal state colliding links:");
         for (collision_detection::CollisionResult::ContactMap::const_iterator it = pairs.begin() ; it != pairs.end() ; ++it)
@@ -882,6 +922,25 @@ void MotionPlanningDisplay::resetInteractiveMarkers()
   query_start_state_->clearError();
   query_goal_state_->clearError();
   addBackgroundJob(boost::bind(&MotionPlanningDisplay::publishInteractiveMarkers, this, false), "publishInteractiveMarkers");
+}
+
+void MotionPlanningDisplay::publishCollisionMarkers(visualization_msgs::MarkerArray& markers)
+{
+  // delete old markers
+  if (collision_markers_.markers.size())
+  {
+    for (int i=0; i<collision_markers_.markers.size(); i++)
+      collision_markers_.markers[i].action = visualization_msgs::Marker::DELETE;
+
+    collision_marker_array_publisher_.publish(collision_markers_);
+  }
+
+  // move new markers into g_collision_points
+  std::swap(collision_markers_.markers, markers.markers);
+
+  // draw new markers (if there are any)
+  if (collision_markers_.markers.size())
+    collision_marker_array_publisher_.publish(collision_markers_);
 }
 
 void MotionPlanningDisplay::publishInteractiveMarkers(bool pose_update)
@@ -1048,6 +1107,7 @@ bool MotionPlanningDisplay::isIKSolutionCollisionFree(robot_state::RobotState *s
   else
     return true;
 }
+
 
 void MotionPlanningDisplay::updateLinkColors()
 {
